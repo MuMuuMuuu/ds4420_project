@@ -1,0 +1,165 @@
+---
+title: "DS4420_Final_Project"
+author: "Eric Wu, Gregory Zeng, Yinzheng Xiong"
+date: "2025-04-03"
+output: html_document
+---
+# Other Model (MLP) & Comparison between the two models are located in the Python file
+
+# 2. Naive_Bayes
+```{r}
+# Libraries used for this code
+library(caret)   
+
+# Read the dataset
+df <- read.csv("food.csv", stringsAsFactors = FALSE)
+
+# Calculate threshold quantiles 
+low_cal <- quantile(df$Data.Kilocalories, 0.33, na.rm = TRUE)
+high_cal <- quantile(df$Data.Kilocalories, 0.67, na.rm = TRUE)
+low_fat <- quantile(df$Data.Fat.Total.Lipid, 0.33, na.rm = TRUE)
+mid_fat <- quantile(df$Data.Fat.Total.Lipid, 0.67, na.rm = TRUE)
+high_protein <- quantile(df$Data.Protein, 0.67, na.rm = TRUE)
+
+# Define the classification function based on nutritional thresholds
+classify_health_goal <- function(cal, protein, fat) {
+  if (cal <= low_cal & protein >= high_protein & fat <= mid_fat) {
+    return("Fat Loss (Preserve Muscle)")
+  } else if (cal >= high_cal & protein >= high_protein) {
+    return("Weight Gain (Muscle Focus)")
+  } else if (cal <= low_cal & fat <= low_fat) {
+    return("Dieting")
+  } else {
+    return("General Health")
+  }
+}
+
+# Apply the function row-wise to create a new column "HealthGoal"
+df$HealthGoal <- mapply(classify_health_goal,
+                        cal = df$Data.Kilocalories,
+                        protein = df$Data.Protein,
+                        fat = df$Data.Fat.Total.Lipid)
+
+# Select numeric features while excluding columns directly involved in classification
+numeric_cols <- sapply(df, is.numeric)
+df_numeric <- df[, numeric_cols]
+
+exclude_cols <- c("Nutrient.Data.Bank.Number", "Data.Kilocalories", "Data.Protein", "Data.Fat.Total.Lipid")
+X <- df_numeric[, !(names(df_numeric) %in% exclude_cols)]
+y <- df$HealthGoal
+
+# Training function: computes class priors, mean, and variance for each numeric feature per class
+train_nb_manual <- function(X_train, y_train) {
+  classes <- unique(y_train)
+  model <- list()
+  model$classes <- classes
+  
+  # Calculate priors, feature means, and feature variances for each class.
+  model$prior <- sapply(classes, function(cl) {
+    mean(y_train == cl)
+  })
+  
+  model$mean <- lapply(classes, function(cl) {
+    colMeans(X_train[y_train == cl, , drop = FALSE])
+  })
+  
+  model$var <- lapply(classes, function(cl) {
+    apply(X_train[y_train == cl, , drop = FALSE], 2, var)
+  })
+  
+  names(model$prior) <- classes
+  names(model$mean) <- classes
+  names(model$var) <- classes
+  
+  return(model)
+}
+
+# Prediction function: computes log probabilities for each class and returns the class with the highest probability
+predict_nb_manual <- function(model, X_test) {
+  predictions <- apply(X_test, 1, function(x) {
+    log_probs <- sapply(model$classes, function(cl) {
+      # Use log of the prior probability
+      log_prob <- log(model$prior[[cl]])
+      # Sum log-probabilities for each feature using the Gaussian density function
+      log_likelihood <- sum(mapply(function(x_i, mean_i, var_i) {
+        # Avoid division by zero by adding a small constant if variance is zero
+        if (var_i == 0) { var_i <- 1e-6 }
+        dnorm(x_i, mean = mean_i, sd = sqrt(var_i), log = TRUE)
+      }, x, model$mean[[cl]], model$var[[cl]]))
+      log_prob + log_likelihood
+    })
+    # Return the class with the highest log probability
+    names(which.max(log_probs))
+  })
+  return(predictions)
+}
+
+# Initialize a data frame to store results
+results <- data.frame(RandomSeed = integer(),
+                      Accuracy   = numeric(),
+                      Precision  = numeric(),
+                      Recall     = numeric(),
+                      F1         = numeric(),
+                      stringsAsFactors = FALSE)
+
+# Run 100 simulations 
+for (seed in 0:99) {
+  cat("Running round", seed + 1, "/100...\n")
+  set.seed(seed)
+  
+  # Create a stratified train-test split (80% training, 20% testing)
+  train_index <- createDataPartition(y, p = 0.8, list = FALSE)
+  train_X <- X[train_index, ]
+  test_X  <- X[-train_index, ]
+  train_y <- y[train_index]
+  test_y  <- y[-train_index]
+  
+  # Standardize the features using the training data parameters
+  train_X_scaled <- scale(train_X)
+  center <- attr(train_X_scaled, "scaled:center")
+  scale_val <- attr(train_X_scaled, "scaled:scale")
+  test_X_scaled <- scale(test_X, center = center, scale = scale_val)
+  
+  # Train the manual Naive Bayes model
+  nb_model <- train_nb_manual(train_X_scaled, train_y)
+  
+  # Predict on the test set using the manual NB implementation
+  predictions <- predict_nb_manual(nb_model, test_X_scaled)
+  
+  # Calculate the confusion matrix
+  cm <- table(test_y, predictions)
+  
+  # Compute Accuracy
+  accuracy <- sum(diag(cm)) / sum(cm)
+  
+  # Compute per-class precision, recall, and F1 score
+  precision_vec <- diag(cm) / colSums(cm)
+  recall_vec    <- diag(cm) / rowSums(cm)
+  f1_vec        <- 2 * precision_vec * recall_vec / (precision_vec + recall_vec)
+  
+  # Replace any NaN values (which may result from division by zero) with 0
+  precision_vec[is.na(precision_vec)] <- 0
+  recall_vec[is.na(recall_vec)]       <- 0
+  f1_vec[is.na(f1_vec)]               <- 0
+  
+  # Compute weighted averages based on support (number of true instances per class)
+  support <- rowSums(cm)
+  total_support <- sum(support)
+  weighted_precision <- sum(precision_vec * support) / total_support
+  weighted_recall    <- sum(recall_vec * support) / total_support
+  weighted_f1        <- sum(f1_vec * support) / total_support
+  
+  # Append the metrics for the current round to the results data frame
+  results <- rbind(results,
+                   data.frame(RandomSeed = seed,
+                              Accuracy   = accuracy,
+                              Precision  = weighted_precision,
+                              Recall     = weighted_recall,
+                              F1         = weighted_f1,
+                              stringsAsFactors = FALSE))
+}
+
+# Save results to csv file
+write.csv(results, "naivebayes_results.csv", row.names = FALSE)
+cat("Naive Bayes model evaluation results have been saved to 'naivebayes_results.csv'\n")
+```
