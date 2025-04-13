@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 设置页面基础信息
+# Set page configuration
 st.set_page_config(page_title="Nutrition Goal Classifier", layout="wide")
 
-# 侧边栏导航
+# Sidebar navigation
 page = st.sidebar.selectbox("Choose a page", ["Landing Page", "Interactive Visualization"])
 
 
-# 加载数据
+# Load data with caching
 @st.cache_data
 def load_data():
     df = pd.read_csv("food.csv")
@@ -18,7 +18,7 @@ def load_data():
 
 df = load_data()
 
-# 定义分类阈值
+# Define classification thresholds
 low_cal = df["Data.Kilocalories"].quantile(0.33)
 high_cal = df["Data.Kilocalories"].quantile(0.67)
 low_fat = df["Data.Fat.Total Lipid"].quantile(0.33)
@@ -26,7 +26,7 @@ high_protein = df["Data.Protein"].quantile(0.67)
 mid_fat = df["Data.Fat.Total Lipid"].quantile(0.67)
 
 
-# 健康目标分类函数
+# Health goal classification function
 def classify_health_goal(row):
     if row["Data.Kilocalories"] <= low_cal and row["Data.Protein"] >= high_protein and row[
         "Data.Fat.Total Lipid"] <= mid_fat:
@@ -39,13 +39,12 @@ def classify_health_goal(row):
         return "General Health"
 
 
-# 应用分类函数
+# Apply the classification function to the dataset
 df["HealthGoal"] = df.apply(classify_health_goal, axis=1)
 
 # Landing Page
 if page == "Landing Page":
     st.title("Personalized Nutrition Recommender")
-
     st.subheader("DS4420 Final Project")
     st.markdown("""
     **Team Members**: Eric Wu, Gregory Zeng, Yinzheng Xiong  
@@ -77,14 +76,14 @@ if page == "Landing Page":
     Use the tab on the left to explore an **interactive visualization** of our results!
     """)
 
-# Interactive Plot Page
+# Interactive Visualization Page
 elif page == "Interactive Visualization":
     st.title("Calories vs Protein: Interactive Visualization")
 
-    # 清洗数据
+    # Clean the data for plotting
     plot_df = df[['Data.Kilocalories', 'Data.Protein', 'HealthGoal', 'Description']].dropna()
 
-    # 创建 Plotly 图
+    # Create a Plotly scatter plot
     fig = px.scatter(
         plot_df,
         x='Data.Kilocalories',
@@ -96,6 +95,7 @@ elif page == "Interactive Visualization":
         opacity=0.7
     )
 
+    # Update plot layout settings
     fig.update_layout(
         width=1000,
         height=700,
